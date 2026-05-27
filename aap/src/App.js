@@ -1,100 +1,65 @@
 import React, { useState, useEffect } from 'react';
-import { initializeApp } from 'firebase/app';
 import { 
-  getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut 
-} from 'firebase/auth';
-import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot, query, where } from 'firebase/firestore';
-import { 
-  BookOpen, Plus, Settings, Users, BrainCircuit, 
-  Save, Trash2, CheckCircle2, XCircle, FileText, 
-  BarChart3, ChevronRight, LogOut, Loader2, Sparkles, AlertCircle, Share2
+  BookOpen, Plus, Settings, Users, BrainCircuit, Save, Trash2, 
+  CheckCircle2, XCircle, FileText, BarChart3, ChevronRight, 
+  LogOut, Sparkles, Moon, Sun, LayoutDashboard
 } from 'lucide-react';
 
-// Configuração injetada pelo ambiente (substitua pelas suas credenciais reais do Firebase se necessário)
-const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getFirestore(app);
-const provider = new GoogleAuthProvider();
-
 export default function App() {
-  const [user, setUser] = useState(null);
-  const [role, setRole] = useState('teacher');
-  const [assessments, setAssessments] = useState([]);
-  const [submissions, setSubmissions] = useState([]);
-  const [currentView, setCurrentView] = useState('dashboard');
-  const [activeAssessment, setActiveAssessment] = useState(null);
-
+  const [darkMode, setDarkMode] = useState(() => localStorage.getItem('gi-theme') === 'dark');
+  const [assessments, setAssessments] = useState(() => JSON.parse(localStorage.getItem('gi-provas') || '[]'));
+  const [submissions, setSubmissions] = useState(() => JSON.parse(localStorage.getItem('gi-submissions') || '[]'));
+  
   useEffect(() => {
-    return onAuthStateChanged(auth, setUser);
-  }, []);
+    localStorage.setItem('gi-provas', JSON.stringify(assessments));
+    localStorage.setItem('gi-submissions', JSON.stringify(submissions));
+    if (darkMode) document.documentElement.classList.add('dark');
+    else document.documentElement.classList.remove('dark');
+  }, [assessments, submissions, darkMode]);
 
-  // Dados isolados por UID do utilizador
-  useEffect(() => {
-    if (!user) return;
-    
-    const assessmentsRef = collection(db, 'assessments');
-    const q = query(assessmentsRef, where("teacherId", "==", user.uid));
-    
-    return onSnapshot(q, (snapshot) => {
-      setAssessments(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-    });
-  }, [user]);
+  const toggleTheme = () => setDarkMode(!darkMode);
 
-  const handleGoogleLogin = async () => {
-    try {
-      await signInWithPopup(auth, provider);
-    } catch (error) {
-      console.error("Erro no login:", error);
-    }
-  };
-
-  if (!user) {
-    return (
-      <div className="min-h-screen bg-gray-900 flex items-center justify-center p-4">
-        <div className="bg-white p-8 rounded-3xl shadow-2xl text-center max-w-sm w-full">
-          <div className="w-20 h-20 bg-yellow-400 rounded-2xl mx-auto flex items-center justify-center text-3xl font-black mb-6">GI</div>
-          <h1 className="text-2xl font-bold mb-2">Bem-vindo ao GI Provas</h1>
-          <p className="text-gray-500 mb-8">Faça login com Google para gerir as suas turmas.</p>
-          <button 
-            onClick={handleGoogleLogin}
-            className="w-full bg-gray-900 text-white py-3 rounded-xl font-bold hover:bg-gray-800 transition-all flex items-center justify-center gap-2"
-          >
-            Entrar com Google
+  return (
+    <div className={darkMode ? 'dark' : ''}>
+      <div className="min-h-screen bg-gray-50 dark:bg-gray-950 text-gray-900 dark:text-gray-100 transition-colors duration-300">
+        <header className="p-6 flex justify-between items-center max-w-7xl mx-auto">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-yellow-400 rounded-xl flex items-center justify-center font-black text-gray-900">GI</div>
+            <h1 className="font-bold text-xl tracking-tight">APP GI PROVAS</h1>
+          </div>
+          <button onClick={toggleTheme} className="p-2 rounded-lg bg-gray-200 dark:bg-gray-800">
+            {darkMode ? <Sun size={20}/> : <Moon size={20}/>}
           </button>
-        </div>
-      </div>
-    );
-  }
+        </header>
 
-  return (
-    <div className="min-h-screen bg-gray-50 font-sans text-gray-800">
-      <header className="bg-gray-900 text-white shadow-lg p-4 flex justify-between items-center">
-        <h1 className="font-bold">APP GI PROVAS</h1>
-        <button onClick={() => signOut(auth)} className="text-sm text-gray-400 hover:text-white">Sair</button>
-      </header>
-      
-      <main className="p-6">
-        <TeacherDashboard 
-            assessments={assessments}
-            onCreate={() => { setActiveAssessment(null); setCurrentView('editor'); }}
-        />
-      </main>
-    </div>
-  );
-}
-
-function TeacherDashboard({ assessments, onCreate }) {
-  return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <h2 className="text-2xl font-bold">Painel do Professor</h2>
-        <button onClick={onCreate} className="bg-yellow-400 px-4 py-2 rounded-lg font-bold">Nova Prova</button>
-      </div>
-      <div className="grid gap-4">
-        {assessments.map(a => (
-          <div key={a.id} className="bg-white p-4 rounded-xl shadow-sm border">{a.title}</div>
-        ))}
+        <main className="p-6 max-w-7xl mx-auto">
+           {/* Bento Grid layout simples */}
+           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+             <div className="md:col-span-2 bg-white dark:bg-gray-900 p-8 rounded-3xl shadow-sm border border-gray-100 dark:border-gray-800">
+                <h2 className="text-2xl font-bold mb-6">Dashboard de Professor</h2>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="bg-yellow-400/10 p-6 rounded-2xl border border-yellow-400/20">
+                    <p className="text-yellow-600 dark:text-yellow-400 font-bold">Provas Ativas</p>
+                    <p className="text-4xl font-black">{assessments.length}</p>
+                  </div>
+                  <div className="bg-blue-400/10 p-6 rounded-2xl border border-blue-400/20">
+                    <p className="text-blue-600 dark:text-blue-400 font-bold">Submissões</p>
+                    <p className="text-4xl font-black">{submissions.length}</p>
+                  </div>
+                </div>
+             </div>
+             
+             <div className="bg-gray-900 dark:bg-yellow-400 text-white dark:text-gray-900 p-8 rounded-3xl flex flex-col justify-between">
+                <div>
+                  <h3 className="font-bold text-lg mb-2">Acesso Rápido</h3>
+                  <p className="text-gray-400 dark:text-gray-700 text-sm">Gerencie suas avaliações com IA.</p>
+                </div>
+                <button className="mt-6 w-full py-4 bg-white/10 dark:bg-gray-900/10 rounded-xl font-bold hover:scale-[1.02] transition-transform">
+                  Nova Avaliação
+                </button>
+             </div>
+           </div>
+        </main>
       </div>
     </div>
   );
