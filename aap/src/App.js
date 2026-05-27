@@ -5,7 +5,7 @@ import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot } from 'fi
 import { 
   BookOpen, Plus, Settings, Users, BrainCircuit, 
   Save, Trash2, CheckCircle2, XCircle, FileText, 
-  BarChart3, ChevronRight, LogOut, Loader2, Sparkles, AlertCircle, Share2, Check, Info, Wifi, WifiOff
+  BarChart3, ChevronRight, LogOut, Loader2, Sparkles, AlertCircle, Share2, Check, Info, History, Search, TrendingUp, Download, Award, HelpCircle
 } from 'lucide-react';
 
 const INITIAL_ASSESSMENTS = [
@@ -265,7 +265,9 @@ export default function App() {
             {currentView === 'dashboard' && (
               <StudentDashboard 
                 assessments={assessments.filter(a => a.published)} 
+                submissions={submissions}
                 onStart={(a) => { setActiveAssessment(a); setCurrentView('taker'); }}
+                onViewResult={(res) => { setActiveAssessment(res); setCurrentView('student_result'); }}
               />
             )}
             {currentView === 'taker' && (
@@ -302,7 +304,7 @@ export default function App() {
 
 function TeacherDashboard({ assessments, onEdit, onCreate, onViewReports, onDelete, onSimulateStudent }) {
   const [showLinkModal, setShowLinkModal] = useState(false);
-  const [deletingId, setDeletingId] = useState(null); // Evita alert/confirm nativos
+  const [deletingId, setDeletingId] = useState(null); 
   const studentUrl = `${window.location.href.split('#')[0].split('?')[0]}#student`;
 
   return (
@@ -375,7 +377,7 @@ function TeacherDashboard({ assessments, onEdit, onCreate, onViewReports, onDele
                   onClick={() => onViewReports(assessment)}
                   className="px-2 py-2 text-sm font-medium bg-gray-900 text-white rounded-lg hover:bg-gray-800 transition-colors flex items-center justify-center gap-1"
                 >
-                  <BarChart3 size={16} /> Notas
+                  <BarChart3 size={16} /> Painel Real
                 </button>
                 
                 {deletingId === assessment.id ? (
@@ -787,122 +789,467 @@ function AssessmentEditor({ initialData, onSave, onCancel }) {
 }
 
 function TeacherReport({ assessment, submissions, onBack }) {
-  const averageScore = submissions.length 
-    ? (submissions.reduce((acc, sub) => acc + Number(sub.score || 0), 0) / submissions.length).toFixed(1) 
+  const [searchTerm, setSearchTerm] = useState('');
+  const [filterTier, setFilterTier] = useState('all'); // 'all' | 'excellent' | 'regular' | 'needs_improvement'
+
+  const totalSubmissions = submissions.length;
+  const totalQuestions = assessment.questions?.length || 1;
+
+  // 1. Cálculos de Desempenho da Turma
+  const averageScore = totalSubmissions 
+    ? (submissions.reduce((acc, sub) => acc + Number(sub.score || 0), 0) / totalSubmissions).toFixed(1) 
     : 0;
+  const averagePercentage = ((averageScore / totalQuestions) * 100).toFixed(0);
+
+  // Alunos aprovados (rendimento >= 50%)
+  const passingSubmissions = submissions.filter(sub => (Number(sub.score || 0) / totalQuestions) >= 0.5).length;
+  const approvalRate = totalSubmissions ? ((passingSubmissions / totalSubmissions) * 100).toFixed(0) : 0;
+
+  // 2. Análise Didática / Conceitos Críticos por Questão
+  const questionStats = assessment.questions?.map((q, qIndex) => {
+    if (totalSubmissions === 0) return { ...q, correctPct: 0 };
+    const correctCount = submissions.filter(sub => {
+      const graded = sub.gradedAnswers?.[qIndex];
+      return graded ? graded.isCorrect : false;
+    }).length;
+    return {
+      ...q,
+      correctCount,
+      correctPct: Number(((correctCount / totalSubmissions) * 100).toFixed(0))
+    };
+  }) || [];
+
+  // 3. Exportador Real para Excel/CSV funcional
+  const exportToCSV = () => {
+    if (submissions.length === 0) return;
+    const headers = ['Aluno', 'Data/Hora', 'Acertos', 'Total Questoes', 'Aproveitamento (%)'];
+    const rows = submissions.map(sub => {
+      const pct = ((Number(sub.score || 0) / totalQuestions) * 100).toFixed(0);
+      return [
+        `"${sub.studentName}"`,
+        `"${new Date(sub.timestamp).toLocaleString('pt-PT')}"`,
+        sub.score,
+        totalQuestions,
+        `"${pct}%"`
+      ];
+    });
+    const csvContent = "data:text/csv;charset=utf-8,\uFEFF" 
+      + [headers.join(','), ...rows.map(e => e.join(','))].join('\n');
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `Relatorio_Turma_${assessment.className.replace(/\s+/g, '_')}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  // 4. Filtrar lista de alunos
+  const filteredSubmissions = submissions.filter(sub => {
+    const matchesSearch = sub.studentName.toLowerCase().includes(searchTerm.toLowerCase());
+    const pct = (Number(sub.score || 0) / totalQuestions) * 100;
+    
+    if (filterTier === 'excellent') return matchesSearch && pct >= 70;
+    if (filterTier === 'regular') return matchesSearch && pct >= 50 && pct < 70;
+    if (filterTier === 'needs_improvement') return matchesSearch && pct < 50;
+    return matchesSearch;
+  });
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center gap-4">
-        <button onClick={onBack} className="p-2 hover:bg-gray-200 rounded-full transition-colors">
-          <ChevronRight className="rotate-180 text-gray-600" />
-        </button>
-        <div>
-          <h2 className="text-2xl font-bold text-gray-900">Relatório de Desempenho</h2>
-          <p className="text-gray-500">{assessment.title} • {assessment.className}</p>
+    <div className="space-y-6 animate-in fade-in">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        <div className="flex items-center gap-4">
+          <button onClick={onBack} className="p-2 hover:bg-gray-200 rounded-full transition-colors">
+            <ChevronRight className="rotate-180 text-gray-600" />
+          </button>
+          <div>
+            <h2 className="text-2xl font-bold text-gray-900">Dashboard de Notas Real-Time</h2>
+            <p className="text-gray-500">{assessment.title} • {assessment.className}</p>
+          </div>
         </div>
+
+        {totalSubmissions > 0 && (
+          <button 
+            onClick={exportToCSV}
+            className="w-full sm:w-auto bg-green-600 hover:bg-green-700 text-white font-bold px-5 py-2.5 rounded-xl flex items-center justify-center gap-2 transition-all shadow-sm text-sm"
+          >
+            <Download size={18} />
+            Exportar para Excel (CSV)
+          </button>
+        )}
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      {/* METRIC CARDS */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex items-center gap-4">
           <div className="w-12 h-12 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center">
             <Users size={24} />
           </div>
           <div>
-            <p className="text-sm text-gray-500 font-medium">Total de Entregas</p>
-            <p className="text-2xl font-bold text-gray-900">{submissions.length}</p>
+            <p className="text-xs font-semibold text-gray-400 uppercase">Submissões Recebidas</p>
+            <p className="text-2xl font-bold text-gray-900">{totalSubmissions} Alunos</p>
           </div>
         </div>
+
         <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex items-center gap-4">
           <div className="w-12 h-12 rounded-full bg-yellow-100 text-yellow-600 flex items-center justify-center">
             <BarChart3 size={24} />
           </div>
           <div>
-            <p className="text-sm text-gray-500 font-medium">Média da Turma</p>
-            <p className="text-2xl font-bold text-gray-900">{averageScore} / {assessment.questions?.length || 0}</p>
+            <p className="text-xs font-semibold text-gray-400 uppercase">Média Geral da Classe</p>
+            <p className="text-2xl font-bold text-gray-900">
+              {averageScore} <span className="text-sm text-gray-400 font-medium">/ {totalQuestions} ({averagePercentage}%)</span>
+            </p>
+          </div>
+        </div>
+
+        <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex items-center gap-4">
+          <div className="w-12 h-12 rounded-full bg-green-100 text-green-600 flex items-center justify-center">
+            <Award size={24} />
+          </div>
+          <div>
+            <p className="text-xs font-semibold text-gray-400 uppercase">Rendimento Positivo</p>
+            <p className="text-2xl font-bold text-gray-900">{approvalRate}% da turma</p>
           </div>
         </div>
       </div>
 
-      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-        <div className="p-4 border-b border-gray-100 bg-gray-50">
-          <h3 className="font-bold text-gray-700">Submissões Detalhadas</h3>
-        </div>
-        {submissions.length === 0 ? (
-          <div className="p-8 text-center text-gray-500">
-            Nenhum aluno realizou esta avaliação ainda.
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* DETALHAMENTO DE CONCEITOS CRÍTICOS (PEDAGÓGICO) */}
+        <div className="lg:col-span-1 bg-white p-6 rounded-2xl shadow-sm border border-gray-100 h-fit space-y-6">
+          <div>
+            <h3 className="font-bold text-gray-900 text-lg">Mapeador de Dificuldade</h3>
+            <p className="text-xs text-gray-400 mt-1">Veja quais questões necessitam de reforço em sala de aula.</p>
           </div>
-        ) : (
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="border-b border-gray-100 text-sm text-gray-500">
-                <th className="p-4 font-medium">Aluno</th>
-                <th className="p-4 font-medium">Data/Hora</th>
-                <th className="p-4 font-medium text-center">Acertos</th>
-                <th className="p-4 font-medium text-center">Desempenho</th>
-              </tr>
-            </thead>
-            <tbody>
-              {submissions.map((sub, i) => {
-                const totalQuestions = assessment.questions?.length || 1;
-                const percentage = (Number(sub.score || 0) / totalQuestions) * 100;
-                return (
-                  <tr key={i} className="border-b border-gray-50 hover:bg-gray-50/50">
-                    <td className="p-4 font-medium text-gray-900">{sub.studentName}</td>
-                    <td className="p-4 text-sm text-gray-500">{new Date(sub.timestamp).toLocaleString('pt-PT')}</td>
-                    <td className="p-4 text-center font-bold">{sub.score} / {totalQuestions}</td>
-                    <td className="p-4">
-                      <div className="w-full bg-gray-200 rounded-full h-2.5">
-                        <div className={`h-2.5 rounded-full ${percentage >= 70 ? 'bg-green-500' : percentage >= 50 ? 'bg-yellow-400' : 'bg-red-500'}`} style={{ width: `${percentage}%` }}></div>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        )}
+
+          {totalSubmissions === 0 ? (
+            <p className="text-sm text-gray-400 text-center py-6">Aguardando entregas de alunos para mapeamento...</p>
+          ) : (
+            <div className="space-y-4">
+              {questionStats.map((q, idx) => (
+                <div key={q.id} className="space-y-1">
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="font-bold text-gray-700">Questão {idx + 1}</span>
+                    <span className={`font-semibold ${q.correctPct >= 70 ? 'text-green-600' : q.correctPct >= 50 ? 'text-yellow-600' : 'text-red-500'}`}>
+                      {q.correctPct}% de acerto
+                    </span>
+                  </div>
+                  <div className="w-full bg-gray-100 rounded-full h-2">
+                    <div 
+                      className={`h-2 rounded-full ${q.correctPct >= 70 ? 'bg-green-500' : q.correctPct >= 50 ? 'bg-yellow-400' : 'bg-red-500'}`} 
+                      style={{ width: `${q.correctPct}%` }}
+                    ></div>
+                  </div>
+                  {q.correctPct < 50 && (
+                    <div className="flex items-center gap-1 mt-1 text-[10px] text-red-500 font-semibold bg-red-50 p-1 rounded">
+                      <HelpCircle size={10} />
+                      Tópico Crítico (Revisar Conteúdo)
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* LISTA FILTRADA E BUSCA DE ALUNOS */}
+        <div className="lg:col-span-2 bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden flex flex-col justify-between">
+          <div>
+            <div className="p-4 border-b border-gray-100 bg-gray-50 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+              <h3 className="font-bold text-gray-700">Histórico de Notas e Desempenho</h3>
+              
+              {/* Filtros */}
+              <div className="flex flex-wrap gap-1.5 bg-gray-200 p-1 rounded-lg text-[11px] font-bold">
+                <button 
+                  onClick={() => setFilterTier('all')}
+                  className={`px-2 py-1 rounded transition-colors ${filterTier === 'all' ? 'bg-gray-900 text-yellow-400 shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}
+                >
+                  Todos
+                </button>
+                <button 
+                  onClick={() => setFilterTier('excellent')}
+                  className={`px-2 py-1 rounded transition-colors ${filterTier === 'excellent' ? 'bg-gray-900 text-yellow-400 shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}
+                >
+                  Excelente (≥70%)
+                </button>
+                <button 
+                  onClick={() => setFilterTier('regular')}
+                  className={`px-2 py-1 rounded transition-colors ${filterTier === 'regular' ? 'bg-gray-900 text-yellow-400 shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}
+                >
+                  Regular
+                </button>
+                <button 
+                  onClick={() => setFilterTier('needs_improvement')}
+                  className={`px-2 py-1 rounded transition-colors ${filterTier === 'needs_improvement' ? 'bg-gray-900 text-yellow-400 shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}
+                >
+                  Atenção
+                </button>
+              </div>
+            </div>
+
+            {/* BARRA DE PESQUISA */}
+            <div className="p-4 border-b border-gray-50">
+              <div className="relative">
+                <Search className="absolute left-3 top-3 text-gray-400" size={16} />
+                <input 
+                  type="text" 
+                  value={searchTerm}
+                  onChange={e => setSearchTerm(e.target.value)}
+                  placeholder="Pesquisar por nome de aluno..."
+                  className="w-full pl-9 pr-4 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-yellow-400 outline-none text-xs"
+                />
+              </div>
+            </div>
+
+            {/* TABELA DE ALUNOS */}
+            {filteredSubmissions.length === 0 ? (
+              <div className="p-12 text-center text-gray-400 text-sm">
+                Nenhum registro encontrado para a pesquisa selecionada.
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="border-b border-gray-100 text-[11px] text-gray-400 uppercase tracking-wider font-bold">
+                      <th className="p-4 font-bold">Aluno</th>
+                      <th className="p-4 font-bold">Data/Hora</th>
+                      <th className="p-4 font-bold text-center">Acertos</th>
+                      <th className="p-4 font-bold text-center">Desempenho</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredSubmissions.map((sub, i) => {
+                      const percentage = (Number(sub.score || 0) / totalQuestions) * 100;
+                      return (
+                        <tr key={i} className="border-b border-gray-50 hover:bg-gray-50/50">
+                          <td className="p-4 font-semibold text-gray-900">{sub.studentName}</td>
+                          <td className="p-4 text-xs text-gray-500">{new Date(sub.timestamp).toLocaleString('pt-PT')}</td>
+                          <td className="p-4 text-center font-bold">{sub.score} / {totalQuestions}</td>
+                          <td className="p-4">
+                            <div className="flex items-center gap-2">
+                              <div className="w-full bg-gray-200 rounded-full h-2">
+                                <div className={`h-2 rounded-full ${percentage >= 70 ? 'bg-green-500' : percentage >= 50 ? 'bg-yellow-400' : 'bg-red-500'}`} style={{ width: `${percentage}%` }}></div>
+                              </div>
+                              <span className={`text-xs font-bold ${percentage >= 70 ? 'text-green-600' : percentage >= 50 ? 'text-yellow-600' : 'text-red-500'}`}>
+                                {percentage.toFixed(0)}%
+                              </span>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );
 }
 
-function StudentDashboard({ assessments, onStart }) {
+function StudentDashboard({ assessments, submissions, onStart, onViewResult }) {
+  const [activeTab, setActiveTab] = useState('tests'); // 'tests' | 'performance'
+  const [searchName, setSearchName] = useState('');
+  const [hasSearched, setHasSearched] = useState(false);
+
+  // Filtra as submissões guardadas na nuvem para este aluno específico
+  const studentSubmissions = submissions.filter(sub => 
+    sub.studentName && sub.studentName.trim().toLowerCase() === searchName.trim().toLowerCase()
+  );
+
+  // Cálculos de métricas do aluno
+  const totalTaken = studentSubmissions.length;
+  const totalScore = studentSubmissions.reduce((acc, curr) => acc + Number(curr.score || 0), 0);
+  const totalQuestions = studentSubmissions.reduce((acc, curr) => acc + Number(curr.totalQuestions || 0), 0);
+  const overallPercentage = totalQuestions > 0 ? ((totalScore / totalQuestions) * 100).toFixed(0) : 0;
+
   return (
     <div className="space-y-6 animate-in fade-in">
-      <div>
-        <h2 className="text-2xl font-bold text-gray-900">Área do Aluno</h2>
-        <p className="text-gray-500">Escolha uma avaliação para iniciar.</p>
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b pb-4">
+        <div>
+          <h2 className="text-2xl font-bold text-gray-900">Área do Aluno</h2>
+          <p className="text-gray-500">Resolva provas ou acompanhe seu progresso na nuvem.</p>
+        </div>
+        
+        {/* Abas Modernas com as cores Amarelo e Preto */}
+        <div className="bg-gray-200 p-1 rounded-xl flex text-sm font-semibold w-full sm:w-auto">
+          <button 
+            onClick={() => setActiveTab('tests')}
+            className={`flex-1 sm:flex-none px-4 py-2 rounded-lg transition-all flex items-center justify-center gap-2 ${activeTab === 'tests' ? 'bg-gray-900 text-yellow-400 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
+          >
+            <BookOpen size={16} />
+            Provas Disponíveis
+          </button>
+          <button 
+            onClick={() => setActiveTab('performance')}
+            className={`flex-1 sm:flex-none px-4 py-2 rounded-lg transition-all flex items-center justify-center gap-2 ${activeTab === 'performance' ? 'bg-gray-900 text-yellow-400 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
+          >
+            <History size={16} />
+            Meu Desempenho
+          </button>
+        </div>
       </div>
 
-      {assessments.length === 0 ? (
-        <div className="text-center py-16 bg-white rounded-2xl shadow-sm border border-gray-100">
-          <FileText className="mx-auto h-12 w-12 text-gray-300 mb-4" />
-          <h3 className="text-lg font-medium text-gray-900">Nenhuma avaliação disponível</h3>
-          <p className="text-gray-500 mt-1">Aguarde o professor publicar novas provas.</p>
-        </div>
-      ) : (
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {assessments.map(assessment => (
-            <div key={assessment.id} className="bg-white p-6 rounded-2xl shadow-md border-l-4 border-yellow-400 flex flex-col h-full hover:-translate-y-1 transition-transform cursor-pointer" onClick={() => onStart(assessment)}>
-              <div className="flex justify-between items-start mb-2">
-                <span className={`px-3 py-1 text-xs font-bold rounded-full ${assessment.type === 'prova' ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'}`}>
-                  {assessment.type.toUpperCase()}
-                </span>
-                <span className="text-sm font-medium text-gray-400 flex items-center gap-1">
-                  <FileText size={14}/> {assessment.questions.length} Q.
-                </span>
-              </div>
-              <h3 className="font-bold text-xl text-gray-900 mb-2 mt-2">{assessment.title}</h3>
-              <p className="text-sm text-gray-600 mb-6">{assessment.className} • Professor GI</p>
-              
-              <button 
-                className="mt-auto w-full bg-gray-900 text-white font-bold py-3 rounded-xl hover:bg-yellow-400 hover:text-gray-900 transition-colors flex justify-center items-center gap-2"
+      {activeTab === 'tests' ? (
+        // ABA 1: PROVAS DISPONÍVEIS
+        assessments.length === 0 ? (
+          <div className="text-center py-16 bg-white rounded-2xl shadow-sm border border-gray-100">
+            <FileText className="mx-auto h-12 w-12 text-gray-300 mb-4" />
+            <h3 className="text-lg font-medium text-gray-900">Nenhuma avaliação disponível</h3>
+            <p className="text-gray-500 mt-1">Aguarde o professor publicar novas provas.</p>
+          </div>
+        ) : (
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+            {assessments.map(assessment => (
+              <div 
+                key={assessment.id} 
+                className="bg-white p-6 rounded-2xl shadow-md border-l-4 border-yellow-400 flex flex-col h-full hover:-translate-y-1 transition-transform cursor-pointer" 
+                onClick={() => onStart(assessment)}
               >
-                Iniciar Agora <ChevronRight size={18} />
+                <div className="flex justify-between items-start mb-2">
+                  <span className={`px-3 py-1 text-xs font-bold rounded-full ${assessment.type === 'prova' ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'}`}>
+                    {assessment.type.toUpperCase()}
+                  </span>
+                  <span className="text-sm font-medium text-gray-400 flex items-center gap-1">
+                    <FileText size={14}/> {assessment.questions?.length || 0} Q.
+                  </span>
+                </div>
+                <h3 className="font-bold text-xl text-gray-900 mb-2 mt-2">{assessment.title}</h3>
+                <p className="text-sm text-gray-600 mb-6">{assessment.className} • Professor GI</p>
+                
+                <button 
+                  className="mt-auto w-full bg-gray-900 text-white font-bold py-3 rounded-xl hover:bg-yellow-400 hover:text-gray-900 transition-colors flex justify-center items-center gap-2 text-sm"
+                >
+                  Iniciar Agora <ChevronRight size={18} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )
+      ) : (
+        // ABA 2: MEU DESEMPENHO (DASHBOARD REAL-TIME DO ALUNO)
+        <div className="space-y-6">
+          <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 max-w-xl">
+            <h3 className="font-bold text-lg text-gray-900 mb-2">Pesquisar Meu Histórico</h3>
+            <p className="text-sm text-gray-500 mb-4">Insira o seu nome completo exatamente como digitou na realização das provas para ver suas notas.</p>
+            
+            <div className="flex gap-2">
+              <div className="relative flex-grow">
+                <Search className="absolute left-3 top-3.5 text-gray-400" size={18} />
+                <input 
+                  type="text" 
+                  value={searchName}
+                  onChange={(e) => {
+                    setSearchName(e.target.value);
+                    setHasSearched(false);
+                  }}
+                  placeholder="Seu nome completo..."
+                  className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-yellow-400 outline-none text-sm"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && searchName.trim()) setHasSearched(true);
+                  }}
+                />
+              </div>
+              <button 
+                onClick={() => {
+                  if (searchName.trim()) setHasSearched(true);
+                }}
+                className="bg-gray-900 text-yellow-400 font-bold px-6 py-3 rounded-xl hover:bg-yellow-400 hover:text-gray-900 transition-all text-sm shadow-sm"
+              >
+                Buscar
               </button>
             </div>
-          ))}
+          </div>
+
+          {hasSearched && (
+            <div className="space-y-6 animate-in fade-in">
+              {totalTaken === 0 ? (
+                <div className="text-center py-10 bg-white rounded-2xl shadow-sm border border-gray-100 text-gray-500">
+                  <AlertCircle className="mx-auto h-10 w-10 text-gray-300 mb-2" />
+                  Nenhum registro encontrado para o nome "<strong>{searchName}</strong>".<br/>Verifique a grafia ou tente novamente.
+                </div>
+              ) : (
+                <>
+                  {/* Resumos Analíticos */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div className="bg-white p-5 rounded-xl shadow-sm border border-gray-100 flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-lg bg-yellow-100 text-yellow-700 flex items-center justify-center">
+                        <FileText size={20} />
+                      </div>
+                      <div>
+                        <p className="text-xs font-semibold text-gray-400 uppercase">Provas Feitas</p>
+                        <p className="text-xl font-bold text-gray-900">{totalTaken}</p>
+                      </div>
+                    </div>
+
+                    <div className="bg-white p-5 rounded-xl shadow-sm border border-gray-100 flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-lg bg-blue-100 text-blue-700 flex items-center justify-center">
+                        <CheckCircle2 size={20} />
+                      </div>
+                      <div>
+                        <p className="text-xs font-semibold text-gray-400 uppercase">Média de Acertos</p>
+                        <p className="text-xl font-bold text-gray-900">
+                          {totalScore} <span className="text-xs text-gray-400 font-normal">de {totalQuestions} Q.</span>
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="bg-white p-5 rounded-xl shadow-sm border border-gray-100 flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-lg bg-green-100 text-green-700 flex items-center justify-center">
+                        <TrendingUp size={20} />
+                      </div>
+                      <div>
+                        <p className="text-xs font-semibold text-gray-400 uppercase">Aproveitamento Geral</p>
+                        <p className={`text-xl font-bold ${Number(overallPercentage) >= 70 ? 'text-green-600' : Number(overallPercentage) >= 50 ? 'text-yellow-600' : 'text-red-600'}`}>
+                          {overallPercentage}%
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Lista de Resultados Salvos */}
+                  <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+                    <div className="p-4 border-b border-gray-100 bg-gray-50">
+                      <h4 className="font-bold text-gray-700">Seu Histórico de Notas</h4>
+                    </div>
+                    
+                    <div className="divide-y divide-gray-100">
+                      {studentSubmissions.map((sub, i) => {
+                        const scorePct = (sub.score / sub.totalQuestions) * 100;
+                        return (
+                          <div key={i} className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-gray-50/50 transition-colors">
+                            <div className="space-y-1">
+                              <h5 className="font-bold text-gray-900">{sub.assessmentTitle}</h5>
+                              <p className="text-xs text-gray-500">
+                                Realizada em: {new Date(sub.timestamp).toLocaleString('pt-PT')}
+                              </p>
+                            </div>
+                            
+                            <div className="flex items-center gap-4">
+                              <div className="text-right">
+                                <p className="text-sm font-bold text-gray-900">Nota: {sub.score} / {sub.totalQuestions}</p>
+                                <span className={`text-[11px] font-bold uppercase ${scorePct >= 70 ? 'text-green-600' : scorePct >= 50 ? 'text-yellow-600' : 'text-red-600'}`}>
+                                  {scorePct.toFixed(0)}% de acertos
+                                </span>
+                              </div>
+                              <button 
+                                onClick={() => onViewResult(sub)}
+                                className="px-4 py-2 text-xs font-bold bg-gray-100 hover:bg-yellow-400 hover:text-gray-900 text-gray-700 rounded-lg transition-all flex items-center gap-1"
+                              >
+                                Ver Correção <ChevronRight size={14} />
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>
